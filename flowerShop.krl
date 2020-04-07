@@ -3,8 +3,8 @@ ruleset flower_shop {
 
   }
   global {
-    getLocation = function() {
-      return ent:location.defaultsTo("placeholderLocation")
+    getStoreLocation = function() {
+      return ent:storeLocation.defaultsTo("placeholderLocation")
     }
     getDriverEci = function() {
       return ent:driverEci
@@ -12,23 +12,36 @@ ruleset flower_shop {
   }
 
   rule new_delivery_request {
-    select when shop delivery
+    select when shop order
 
     pre {
-      location = getLocation()
+      storeLocation = getStoreLocation()
       customerName = event:attr("customerName")
-      address = event:attr("address")
+      customerLocation = event:attr("customerLocation")
       decisionTime = event:attr("decisionTime")
       driverEci = getDriverEci()
     }
     event:send({
       "eci": driverEci,
       "domain": driver,
-      "type": 
+      "type": "newJob",
+      "attrs": {
+        "decisionTime": decisionTime,
+        "customerLocation": customerLocation,
+        "customerName": customerName,
+        "storeLocation": storeLocation
+      }
     })
 
   }
 
+  rule receive_order_report {
+    select when shop orderReport
+  }
+
+  rule select_driver {
+    select when shop selectDriver
+  }
 
 
 }
