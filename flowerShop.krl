@@ -43,5 +43,17 @@ ruleset flower_shop {
     select when shop selectDriver
   }
 
+  rule set_properties {
+    select when shop set_properties
+    pre {
+      driverEci = event:attr("driverEci").defaultsTo(getDriverEci())
+      storeLocation = event:attr("location").defaultsTo(getStoreLocation())
+    }
+    noop()
+    fired {
+      ent:driverEci := driverEci
+      ent:storeLocation := storeLocation
+    }
+  }
 
 }
