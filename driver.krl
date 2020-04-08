@@ -1,12 +1,21 @@
 ruleset driver {
   meta {
         use module io.picolabs.subscription alias Subscriptions
-        shares __testing
+        shares __testing, getOrders
     }
 
     global {
-        __testing = { "queries": [ ],
-                      "events":  [ ] }
+        __testing = { "queries": [ { "name": "getOrders" } ],
+                      "events":  [ { "domain": "driver", "type": "set_sms", "attrs": [ "sms" ] },
+                                   { "domain": "driver", "type": "set_location", "attrs": [ "lat", "lng" ] },
+                                   { "domain": "driver", "type": "bid_order", "attrs": [ "orderID" ] },
+                                   { "domain": "driver", "type": "new_rating", "attrs": [ "rating" ] } ] }
+
+        default_rating = 3
+        default_ratings = [3]
+        default_sms = "+12063848336"
+        //40.567138, -111.838003
+        default_location = { "lat": 40.567138, "lng": -111.838003 }
 
         getOrders = function() {
           ent:seen_orders
@@ -84,21 +93,49 @@ ruleset driver {
         }
     }
 
+//------------------------NEEDED BY STORES---------------------------------------------
 
     /*
     Order format:
     {
-        "OrderID": _____,
-        "DriverID": _____,
-        "CustomerID": ____,
-        "CustomerAddress": ____,
-        "StoreECI": _____,
+        "OrderID": <StoreECI:sequence>,
+        "CustomerID": <customer name>,
+        "CustomerLocation": <Lat, Lng>,
+        "StoreECI": _____
     }
     */
+
+
+    rule new_order {
+        select when driver new_order
+
+        pre {
+            //Get order from store
+            order = event:attr("order")
+            orderID = order{"OrderID"}
+
+        }
+
+        always {
+            ent:seen_orders := ent:seen_orders.append(order)
+            ent:seen{orderID} := consecutiveSequence(orderID)
+        }
+    }
 
     rule bid_order {
         select when driver bid_order
 
+        pre {
+          orderID = event:attr("orderID")
+          store_eci = ent:seen_orders.filter(function(a) {
+            a{"OrderID"} == orderID
+          })[0]{"StoreECI"}.klog("Chosen Store: ")
+
+          driver_eci = meta:picoId
+          driver_location = ent:location
+          driver_sms = ent:sms
+          driver_rating = ent:rating
+        }
         /*
         Send back to store:
         {
@@ -108,30 +145,59 @@ ruleset driver {
             "DriverRating": ______
         }
         */
+
+        /*event:send({
+            "eci": store_eci,
+            "eid": "fastflower",
+            "domain": "store", "type": "driver_bid",
+            "attrs": {
+              "DriverECI": driver_eci,
+              "DriverLocation": driver_location,
+              "DriverSMS": driver_sms,
+              "DriverRating": driver_rating
+            }
+        })*/
     }
 
     rule bid_accepted {
         select when driver bid_accepted
 
-        //ent:current_order := event:attr("order")
-    }
-
-    rule bid_rejected {
-        select when driver bid_rejected
-
-        //ent:current_order := {}
+        always {
+          ent:current_order := event:attr("order")
+        }
     }
 
     rule delivery_complete {
-        select when drive delivery_complete
+        select when driver delivery_complete
 
         pre {
-            timestamp = event:attr("timestamp")
+            driver_eci = meta:picoId
+            customer_location = current_order{"CustomerLocation"}
+            driver_sms = ent:sms
             rating = event:attr("rating")
         }
 
-        //raise event to store indicating the order was completed
+        always {
+          ent:total_ratings := ent:total_ratings.append(rating)
+          ent:rating := ent:total_ratings.reduce(function(a, b) {a + b}) / ent:total_ratings.length()
+          ent:location := customer_location
+
+          //Raise event to store indicating the order was completed
+          /*event:send({
+            "eci": ent:current_order{"StoreECI"},
+            "eid": "fastflower",
+            "domain": "store", "type": "delivery_complete",
+            "attrs": {
+              "DriverECI": driver_eci,
+              "DriverLocation": ent:location,
+              "DriverSMS": driver_sms,
+              "DriverRating": ent:rating
+            }
+        })*/
+        }
     }
+
+//-------------------------------END----------------------------------------------
 
 //----------------------------GOSSIP STUFF-----------------------------------------
 
@@ -140,28 +206,17 @@ ruleset driver {
 
         always {
             ent:interval := 3
-            ent:sequence := 0
             ent:seen := {}
             ent:state := {}
             ent:seen_orders := []
             ent:current_order := {}
             ent:availability := "available"
+            ent:sms := default_sms
+            //40.567138, -111.838003
+            ent:location := default_location
+            ent:rating := default_rating
+            ent:total_ratings := default_ratings
             raise driver event "order_received"
-        }
-    }
-
-    rule new_order {
-        select when driver new_order
-
-        pre {
-            //Get order from store
-            order = event:attr("order")
-            orderID = event:attr("order"){"OrderID"}
-        }
-        always {
-            ent:seen_orders := ent:seen_orders.append(order)
-            ent:seen{orderID} := consecutiveSequence(orderID)
-            ent:sequence := ent:sequence + 1
         }
     }
 
@@ -245,9 +300,8 @@ ruleset driver {
         } finally {
             ent:seen_orders := ent:seen_orders.append({
                 "OrderID": id,
-                "DriverID": event:attr("DriverID"),
                 "CustomerID": event:attr("CustomerID"),
-                "CustomerAddress": event:attr("CustomerAddress"),
+                "CustomerLocation": event:attr("CustomerLocation"),
                 "StoreECI": event:attr("StoreECI")})
             if ent:seen_orders.filter(function(a) {a{"OrderID"} == id}).length() == 0
 
@@ -289,15 +343,41 @@ ruleset driver {
       }
     }
 
-    rule change_interval {
-      select when driver change_interval
+    rule set_sms {
+      select when driver set_sms
 
       pre {
-        interval = event:attr("interval").defaultsTo(ent:interval)
+        sms = event:attr("sms").defaultsTo(ent:sms)
       }
 
       always {
-        ent:interval := interval
+        ent:sms := sms
+      }
+    }
+
+    rule set_location {
+      select when driver set_location
+
+      pre {
+        lat = event:attr("lat")
+        lng = event:attr("lng")
+      }
+
+      always {
+        ent:location := { "lat": lat, "lng": lng }
+      }
+    }
+
+    rule new_rating {
+      select when driver new_rating
+
+      pre {
+        rating = event:attr("rating").as("Number")
+      }
+
+      always {
+        ent:total_ratings := ent:total_ratings.append(rating)
+        ent:rating := ent:total_ratings.reduce(function(a, b) {a + b}) / ent:total_ratings.length()
       }
     }
 }
