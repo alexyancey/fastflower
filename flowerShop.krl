@@ -80,7 +80,7 @@ ruleset flower_store {
     //decide which driver should get the bid
     pre {
       currentWinner = getWinningDriver(event:attr("orderId")).defaultsTo(bid)
-      (currentWinner{"distance"} < bid{"distance"}) newWinner = currentWinner || bid
+      newWinner = ((currentWinner{"distance"} < bid{"distance"}) => currentWinner | bid)
     }
     noop()
     fired {
