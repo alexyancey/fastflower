@@ -4,6 +4,9 @@ ruleset flower_store {
     use module twilioApiModule alias TwilioApi
     with account_sid = keys:auth{"account_sid"}
          auth_token =  keys:auth{"auth_token"}
+    use module bingMapApiModule alias bing
+    with bingApiKey = keys:auth{"api_key"}
+      
   }
   global {
     getStoreLocation = function() {
@@ -31,6 +34,11 @@ ruleset flower_store {
     }
     getAutoAssignDrivers = function() {
       return ent:autoAssignDrivers.defaultsTo(true)
+    }
+    getDistanceOfPoints = function(srcLat, srcLong, destLat, destLong) {
+      response = http:get("https://dev.virtualearth.net/REST/v1/Routes/DistanceMatrix?origins=" + srcLat + "&" + srcLong + "&destinations=" + destLat +"&" + destLong + "&travelMode=driving&key=" + bingApiKey)
+      result = response{"resourceSets"}{"resources"}{"results"}
+      return {"Minutes To Destination": result{"travelDistance"}, "Kilometers To Target": result{"travelDuration"}}
     }
   }
 
@@ -60,7 +68,7 @@ ruleset flower_store {
     })
     always {
       schedule store event ((getAutoAssignDrivers() == true) => "select_driver" | "") at time:add(time:now(), {"seconds": getDecisionTime()})
-        ent:orderId := ent:orderId + 1
+             ent:orderId := ent:orderId + 1
     }
   }
 
@@ -92,7 +100,7 @@ ruleset flower_store {
     noop()
     fired {
       ent:currentWinner := ent:currentWinner.put([event:attr("orderId")], newWinner)
-      raise event notify_driver 
+      raise event notify_driver
       attributes event:attr() on final
     }
   }
@@ -107,18 +115,17 @@ ruleset flower_store {
     noop()
     fired {
       ent:currentWinner := ent:currentWinner.put([event:attr("orderId")], newWinner)
-      raise event notify_driver 
+      raise event notify_driver
       attributes event:attr() on final
     }
   }
-
   rule notify_driver {
     select when store notify_driver
 
     pre {
       winningDriver = getWinningDriver(event:attr("orderId"))
     }
-    if (winningDriver) then 
+    if (winningDriver) then
     every {
       event:send({
       "eci": winningDriver{"driverEci"},
@@ -132,7 +139,7 @@ ruleset flower_store {
           "customer_location": customerLocation
           },
         }
-      }) 
+      })
       TwilioApi:send_sms(sensor:receiving_phone(), sensor:sending_phone(), "Temperature on your wovyn device is above your threshold of " + sensor:temperature_threshold())
     }
   }
