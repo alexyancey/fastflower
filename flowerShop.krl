@@ -137,6 +137,11 @@ ruleset flower_store {
     }
   }
 
+  rule delivery_complete {
+    select when store delivery_complete
+    noop()
+  }
+
   rule set_properties {
     select when store set_properties
     pre {
