@@ -1,6 +1,9 @@
 ruleset flower_store {
   meta {
-
+    use module twilio_auth
+    use module twilioApiModule alias TwilioApi
+    with account_sid = keys:auth{"account_sid"}
+         auth_token =  keys:auth{"auth_token"}
   }
   global {
     getStoreLocation = function() {
@@ -10,7 +13,7 @@ ruleset flower_store {
       return ent:knownDriverEci
     }
     getorderId = function() {
-      return meta:picoId + ent:orderId
+      return {}.put(meta:picoId, ent:orderId)
     }
     getDecisionTime = function() {
       return ent:decisionTime.defaultsTo(15)
@@ -22,6 +25,12 @@ ruleset flower_store {
     }
     getWinningDriver = function(orderId) {
       return ent:winningDriver{"orderId"}
+    }
+    getRatingThreshold = function() {
+      return ent:ratingThreshold
+    }
+    getAutoAssignDrivers = function() {
+      return ent:autoAssignDrivers
     }
   }
 
@@ -50,10 +59,7 @@ ruleset flower_store {
       }
     })
     always {
-      schedule store event "select_driver" at time:add(time:now(), {"seconds": ent:decisionTime})
-        attributes {
-          "orderId": getorderId(),
-        }
+      schedule store event ((getAutoAssignDrivers() == true) => "select_driver" | "") at time:add(time:now(), {"seconds": getDecisionTime()})
         ent:orderId := ent:orderId + 1
     }
   }
@@ -75,16 +81,32 @@ ruleset flower_store {
   }
 
   rule select_driver {
-    select when store selectDriver
+    select when store select_driver
     foreach getOrderBids(event:attr("orderId")) setting (bid)
     //decide which driver should get the bid
     pre {
       currentWinner = getWinningDriver(event:attr("orderId")).defaultsTo(bid)
-      newWinner = ((currentWinner{"distance"} < bid{"distance"}) => currentWinner | bid)
+      distanceWinner = ((currentWinner{"distance"} < bid{"distance"}) => currentWinner | bid)
+      newWinner = ((bid{"driverRating"}.as("Number") < getRatingThreshold()) => currentWinner | distanceWinner)
     }
     noop()
     fired {
-      ent:currentWinner := ent:currentWinner.put([event:attr("orderId")], currentWinner)
+      ent:currentWinner := ent:currentWinner.put([event:attr("orderId")], newWinner)
+      raise event notify_driver 
+      attributes event:attr() on final
+    }
+  }
+
+  rule manual_select_driver {
+    select when store manual_select_driver
+    pre {
+      newWinner = getOrderBids(event:attr("orderId")).filter(function(a) {
+        a{"driverEci"} == event:attr("driverEci")
+      })
+    }
+    noop()
+    fired {
+      ent:currentWinner := ent:currentWinner.put([event:attr("orderId")], newWinner)
       raise event notify_driver 
       attributes event:attr() on final
     }
@@ -96,7 +118,9 @@ ruleset flower_store {
     pre {
       winningDriver = getWinningDriver(event:attr("orderId"))
     }
-    event:send({
+    if (winningDriver) then 
+    every {
+      event:send({
       "eci": winningDriver{"driverEci"},
       "domain": driver,
       "type": "bid_accepted",
@@ -106,9 +130,11 @@ ruleset flower_store {
           "orderId": getorderId(),
           "customerId": customerName,
           "customer_location": customerLocation
-        },
-      }
-    })
+          },
+        }
+      }) 
+      TwilioApi:send_sms(sensor:receiving_phone(), sensor:sending_phone(), "Temperature on your wovyn device is above your threshold of " + sensor:temperature_threshold())
+    }
   }
 
   rule set_properties {
@@ -117,6 +143,8 @@ ruleset flower_store {
       driverEci = event:attr("driverEci").defaultsTo(getdriverEci())
       storeLocation = event:attr("location").defaultsTo(getStoreLocation())
       decisionTime = event:attr("decisionTime").defaultsTo(getDecisionTime())
+      ratingThreshold = event:attr("ratingThreshold").defaultsTo(getRatingThreshold())
+      autoAssignDrivers = event:attr("autoAssignDrivers").defaultsTo(getAutoAssignDrivers())
       orderId = 0.defaultsTo(getorderId())
     }
     noop()
@@ -125,6 +153,8 @@ ruleset flower_store {
       ent:storeLocation := storeLocation
       ent:orderId := orderId
       ent:decisionTime := decisionTime
+      ent:ratingThreshold := ratingThreshold
+      ent:autoAssignDrivers := autoAssignDrivers
     }
   }
 
