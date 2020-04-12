@@ -27,10 +27,10 @@ ruleset flower_store {
       return ent:winningDriver{"orderId"}
     }
     getRatingThreshold = function() {
-      return ent:ratingThreshold
+      return ent:ratingThreshold.defaultsTo(2)
     }
     getAutoAssignDrivers = function() {
-      return ent:autoAssignDrivers
+      return ent:autoAssignDrivers.defaultsTo(true)
     }
   }
 
