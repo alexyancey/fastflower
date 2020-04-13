@@ -9,8 +9,12 @@ ruleset driver {
                       "events":  [ { "domain": "driver", "type": "set_sms", "attrs": [ "sms" ] },
                                    { "domain": "driver", "type": "set_location", "attrs": [ "lat", "lng" ] },
                                    { "domain": "driver", "type": "bid_order", "attrs": [ "orderId" ] },
+<<<<<<< HEAD
                                    { "domain": "driver", "type": "new_rating", "attrs": [ "rating" ] },
                                    { "domain": "driver", "type": "delivery_complete", "attrs": [ "rating" ] } ] }
+=======
+                                   { "domain": "driver", "type": "new_rating", "attrs": [ "rating" ] } ] }
+>>>>>>> eaaf21b750e6edc544bde58d390e087ccc37d91a
 
         default_rating = 3
         default_ratings = [3]
@@ -110,7 +114,11 @@ ruleset driver {
 
         pre {
             //Get order from store
+<<<<<<< HEAD
             order = event:attr("order").klog("New Order: ")
+=======
+            order = event:attr("order")
+>>>>>>> eaaf21b750e6edc544bde58d390e087ccc37d91a
             orderId = order{"orderId"}
 
         }
@@ -128,7 +136,11 @@ ruleset driver {
           orderId = event:attr("orderId")
           store_eci = ent:seen_orders.filter(function(a) {
             a{"orderId"} == orderId
+<<<<<<< HEAD
           })[0]{"storeEci"}
+=======
+          })[0]{"storeEci"}.klog("Chosen Store: ")
+>>>>>>> eaaf21b750e6edc544bde58d390e087ccc37d91a
 
           driver_eci = meta:eci
           driver_location = ent:location
@@ -153,7 +165,11 @@ ruleset driver {
               "driverLocation": driver_location,
               "driverSms": driver_sms,
               "driverRating": driver_rating,
+<<<<<<< HEAD
               "orderId": orderId
+=======
+              "orderId": 
+>>>>>>> eaaf21b750e6edc544bde58d390e087ccc37d91a
             }
         })
     }
@@ -170,8 +186,13 @@ ruleset driver {
         select when driver delivery_complete
 
         pre {
+<<<<<<< HEAD
             driver_eci = meta:eci
             customer_location = ent:current_order{"customerLocation"}
+=======
+            driver_eci = meta:picoId
+            customer_location = current_order{"customerLocation"}
+>>>>>>> eaaf21b750e6edc544bde58d390e087ccc37d91a
             driver_sms = ent:sms
             rating = event:attr("rating").as("Number")
         }
@@ -181,7 +202,22 @@ ruleset driver {
           ent:rating := ent:total_ratings.reduce(function(a, b) {a + b}) / ent:total_ratings.length()
           ent:location := customer_location
 
+<<<<<<< HEAD
           raise driver event "inform_store"
+=======
+          //Raise event to store indicating the order was completed
+          /*event:send({
+            "eci": ent:current_order{"storeEci"},
+            "eid": "fastflower",
+            "domain": "store", "type": "delivery_complete",
+            "attrs": {
+              "driverEci": driver_eci,
+              "driverLocation": ent:location,
+              "driverSms": driver_sms,
+              "driverRating": ent:rating
+            }
+        })*/
+>>>>>>> eaaf21b750e6edc544bde58d390e087ccc37d91a
         }
     }
 
