@@ -8,25 +8,24 @@ ruleset driver {
         __testing = { "queries": [ { "name": "getOrders" } ],
                       "events":  [ { "domain": "driver", "type": "set_sms", "attrs": [ "sms" ] },
                                    { "domain": "driver", "type": "set_location", "attrs": [ "lat", "lng" ] },
-                                   { "domain": "driver", "type": "bid_order", "attrs": [ "orderID" ] },
-                                   { "domain": "driver", "type": "new_rating", "attrs": [ "rating" ] } ] }
+                                   { "domain": "driver", "type": "bid_order", "attrs": [ "orderId" ] },
+                                   { "domain": "driver", "type": "new_rating", "attrs": [ "rating" ] },
+                                   { "domain": "driver", "type": "delivery_complete", "attrs": [ "rating" ] } ] }
 
         default_rating = 3
         default_ratings = [3]
         default_sms = "+12063848336"
-        //40.567138, -111.838003
-        default_location = { "lat": 40.567138, "lng": -111.838003 }
 
         getOrders = function() {
           ent:seen_orders
         }
 
-        getSequence = function(OrderID) {
-            OrderID.split(re#:#)[1].as("Number")
+        getSequence = function(orderId) {
+            orderId.split(re#:#)[1].as("Number")
         }
 
-        getID = function(OrderID) {
-            OrderID.split(re#:#)[0]
+        getID = function(orderId) {
+            orderId.split(re#:#)[0]
         }
 
         getPeer = function() {
@@ -47,10 +46,10 @@ ruleset driver {
 
         consecutiveSequence = function(picoId) {
             ent:seen_orders.filter(function(a) {
-                id = getID(a{"OrderID"});
+                id = getID(a{"orderId"});
                 id == picoId
             }).map(function(a) {
-                getSequence(a{"OrderID"})
+                getSequence(a{"orderId"})
             }).sort(function(seq1, seq2) {
                 seq1 < seq2  => -1 |
                 seq1 == seq2 =>  0 |
@@ -77,11 +76,11 @@ ruleset driver {
 
         findMissing = function(seen) {
             ent:seen_orders.filter(function(a) {
-                id = getID(a{"OrderID"});
-                return seen{id}.isnull() || (seen{id} < getSequence(a{"OrderID"})) => true | false;
+                id = getID(a{"orderId"});
+                return seen{id}.isnull() || (seen{id} < getSequence(a{"orderId"})) => true | false;
             }).sort(function(a, b) {
-                getSequence(a{"OrderID"}) < getSequence(b{"OrderID"})  => -1 |
-                getSequence(a{"OrderID"}) == getSequence(b{"OrderID"}) =>  0 |
+                getSequence(a{"orderId"}) < getSequence(b{"orderId"})  => -1 |
+                getSequence(a{"orderId"}) == getSequence(b{"orderId"}) =>  0 |
                 1
             })
         }
@@ -98,10 +97,10 @@ ruleset driver {
     /*
     Order format:
     {
-        "OrderID": <StoreECI:sequence>,
-        "CustomerID": <customer name>,
-        "CustomerLocation": <Lat, Lng>,
-        "StoreECI": _____
+        "orderId": <storeEci:sequence>,
+        "customerId": <customer name>,
+        "customerLocation": <Lat, Lng>,
+        "storeEci": _____
     }
     */
 
@@ -111,14 +110,14 @@ ruleset driver {
 
         pre {
             //Get order from store
-            order = event:attr("order")
-            orderID = order{"OrderID"}
+            order = event:attr("order").klog("New Order: ")
+            orderId = order{"orderId"}
 
         }
 
         always {
             ent:seen_orders := ent:seen_orders.append(order)
-            ent:seen{orderID} := consecutiveSequence(orderID)
+            ent:seen{orderId} := consecutiveSequence(orderId)
         }
     }
 
@@ -126,12 +125,12 @@ ruleset driver {
         select when driver bid_order
 
         pre {
-          orderID = event:attr("orderID")
+          orderId = event:attr("orderId")
           store_eci = ent:seen_orders.filter(function(a) {
-            a{"OrderID"} == orderID
-          })[0]{"StoreECI"}.klog("Chosen Store: ")
+            a{"orderId"} == orderId
+          })[0]{"storeEci"}
 
-          driver_eci = meta:picoId
+          driver_eci = meta:eci
           driver_location = ent:location
           driver_sms = ent:sms
           driver_rating = ent:rating
@@ -139,31 +138,31 @@ ruleset driver {
         /*
         Send back to store:
         {
-            "DriverECI": ______,
-            "DriverLocation": _____,
-            "DriverSMS": ______,
-            "DriverRating": ______
+            "driverEci": ______,
+            "driverLocation": _____,
+            "driverSms": ______,
+            "driverRating": ______
         }
         */
 
-        /*event:send({
+        event:send({
             "eci": store_eci,
-            "eid": "fastflower",
             "domain": "store", "type": "driver_bid",
             "attrs": {
-              "DriverECI": driver_eci,
-              "DriverLocation": driver_location,
-              "DriverSMS": driver_sms,
-              "DriverRating": driver_rating
+              "driverEci": driver_eci,
+              "driverLocation": driver_location,
+              "driverSms": driver_sms,
+              "driverRating": driver_rating,
+              "orderId": orderId
             }
-        })*/
+        })
     }
 
     rule bid_accepted {
         select when driver bid_accepted
 
         always {
-          ent:current_order := event:attr("order")
+          ent:current_order := event:attr("order").klog("Your Current Order: ")
         }
     }
 
@@ -171,10 +170,10 @@ ruleset driver {
         select when driver delivery_complete
 
         pre {
-            driver_eci = meta:picoId
-            customer_location = current_order{"CustomerLocation"}
+            driver_eci = meta:eci
+            customer_location = ent:current_order{"customerLocation"}
             driver_sms = ent:sms
-            rating = event:attr("rating")
+            rating = event:attr("rating").as("Number")
         }
 
         always {
@@ -182,19 +181,26 @@ ruleset driver {
           ent:rating := ent:total_ratings.reduce(function(a, b) {a + b}) / ent:total_ratings.length()
           ent:location := customer_location
 
-          //Raise event to store indicating the order was completed
-          /*event:send({
-            "eci": ent:current_order{"StoreECI"},
-            "eid": "fastflower",
-            "domain": "store", "type": "delivery_complete",
-            "attrs": {
-              "DriverECI": driver_eci,
-              "DriverLocation": ent:location,
-              "DriverSMS": driver_sms,
-              "DriverRating": ent:rating
-            }
-        })*/
+          raise driver event "inform_store"
         }
+    }
+
+    rule inform_store {
+      select when driver inform_store
+
+      //Raise event to store indicating the order was completed
+      event:send({
+        "eci": ent:current_order{"storeEci"},
+        "eid": "fastflower",
+        "domain": "store", "type": "delivery_complete",
+        "attrs": {
+          "orderId": ent:current_order{"orderId"}
+        }
+      })
+
+      always {
+        ent:current_order := {}
+      }
     }
 
 //-------------------------------END----------------------------------------------
@@ -212,8 +218,17 @@ ruleset driver {
             ent:current_order := {}
             ent:availability := "available"
             ent:sms := default_sms
-            //40.567138, -111.838003
-            ent:location := default_location
+
+            //40.567257,-111.838092
+            rand_lat = random:number(lower = 40.567200, upper = 40.567500).as("String")
+            rand_lat = rand_lat.substr(0, 9)
+
+            rand_lng = random:number(lower = -111.838000, upper = -111.838500).as("String")
+            rand_lng = rand_lng.substr(0, 11)
+
+            start_location = { "lat": rand_lat, "lng": rand_lng }
+            ent:location := start_location
+
             ent:rating := default_rating
             ent:total_ratings := default_ratings
             raise driver event "order_received"
@@ -249,14 +264,14 @@ ruleset driver {
         pre {
             subscriber = event:attr("subscriber")
             message = event:attr("message")
-            orderID = message{"OrderID"}
+            orderId = message{"orderId"}
         }
 
         event:send({
             "eci": subscriber{"Tx"},
             "eid": "driver_message",
             "domain": "driver", "type": "seen",
-            "attrs": {"message": message, "sender": {"picoId": orderID, "Rx": subscriber{"Rx"}}}
+            "attrs": {"message": message, "sender": {"picoId": orderId, "Rx": subscriber{"Rx"}}}
         })
     }
 
@@ -266,8 +281,8 @@ ruleset driver {
         pre {
             subscriber = event:attr("subscriber")
             message = event:attr("message")
-            picoId = getID(message{"OrderID"})
-            sequence = getSequence(message{"OrderID"})
+            picoId = getID(message{"orderId"})
+            sequence = getSequence(message{"orderId"})
         }
 
         event:send({
@@ -287,7 +302,7 @@ ruleset driver {
         select when driver rumor
 
         pre {
-            id = event:attr("OrderID")
+            id = event:attr("orderId")
             seq_num = getSequence(id)
             pico_id = getID(id)
             seen_obj = ent:seen{pico_id}
@@ -299,11 +314,11 @@ ruleset driver {
             ent:seen{pico_id} := -1
         } finally {
             ent:seen_orders := ent:seen_orders.append({
-                "OrderID": id,
-                "CustomerID": event:attr("CustomerID"),
-                "CustomerLocation": event:attr("CustomerLocation"),
-                "StoreECI": event:attr("StoreECI")})
-            if ent:seen_orders.filter(function(a) {a{"OrderID"} == id}).length() == 0
+                "orderId": id,
+                "customerId": event:attr("customerId"),
+                "customerLocation": event:attr("customerLocation"),
+                "storeEci": event:attr("storeEci")})
+            if ent:seen_orders.filter(function(a) {a{"orderId"} == id}).length() == 0
 
             ent:seen{pico_id} := consecutiveSequence(pico_id)
         }
